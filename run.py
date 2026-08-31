@@ -1,19 +1,68 @@
 #!/usr/bin/python3
 
-import numpy as np
-import matplotlib.pyplot as plt
 import os, glob, shutil
-import nibabel as nib
-from scipy import ndimage
-from scipy.interpolate import RegularGridInterpolator
-from dipy import align
-import dipy
+import subprocess
 import argparse
-from dipy.align.imaffine import (AffineMap,
-                                 MutualInformationMetric,
-                                 AffineRegistration)
-from dipy.align.transforms import (TranslationTransform3D,
-                                   RigidTransform3D)
+
+TEMPLATE_PATH = '/image_templates/tpl-MNI152NLin2009cAsym_res-01_mask-applied_{}.nii.gz'
+
+
+def nifti_extension(file_path):
+    """Return the supported NIfTI extension for a path."""
+    if file_path.endswith('.nii.gz'):
+        return '.nii.gz'
+    if file_path.endswith('.nii'):
+        return '.nii'
+    raise ValueError('Expected a .nii or .nii.gz input: ' + file_path)
+
+
+def subject_relative_path(input_file_path):
+    """Return the input path beginning at its BIDS subject directory."""
+    input_path = os.path.abspath(input_file_path)
+    path_parts = input_path.split(os.sep)
+    subject_index = next((index for index, part in enumerate(path_parts) if part.startswith('sub-')), None)
+    if subject_index is None:
+        raise ValueError('Input path must contain a BIDS subject directory: ' + input_file_path)
+    return os.path.join(*path_parts[subject_index:])
+
+
+def output_paths(input_file_path, output_destination, contrast):
+    """Build output paths while always writing registered images as .nii.gz."""
+    relative_path = subject_relative_path(input_file_path)
+    input_name = os.path.basename(relative_path)
+    extension = nifti_extension(input_name)
+    input_stem = input_name[:-len(extension)]
+    output_base = os.path.join(output_destination, os.path.dirname(relative_path))
+    if input_stem.endswith('_QALAS'):
+        output_suffix = 'QALAS'
+    else:
+        output_suffix = contrast
+    masked_path = os.path.join(output_base, 'masked-brain_{}.nii.gz'.format(output_suffix))
+    registered_path = os.path.join(
+        output_base,
+        'reg-MNI152NLin2009cAsym_{}.nii.gz'.format(output_suffix),
+    )
+    return masked_path, registered_path
+
+
+def sidecar_path(nifti_path):
+    """Return the JSON sidecar path for either supported NIfTI extension."""
+    return nifti_path[:-len(nifti_extension(nifti_path))] + '.json'
+
+
+def run_synthstrip(input_file_path, stripped_out_file):
+    """Run SynthStrip and fail immediately if skull stripping fails."""
+    subprocess.run(
+        ['python3', '/freesurfer/mri_synthstrip', '-i', input_file_path, '-o', stripped_out_file],
+        check=True,
+    )
+
+
+def copy_sidecar(input_file_path, output_file_path):
+    """Copy an input JSON sidecar when one is available."""
+    input_sidecar = sidecar_path(input_file_path)
+    if os.path.exists(input_sidecar):
+        shutil.copyfile(input_sidecar, sidecar_path(output_file_path))
 
 
 
@@ -25,42 +74,34 @@ def register_images(input_file_path, output_destination, reuse_existing_output_f
     #Input file path = full path to either T1w or T2w image
     #Output Destination = the top directory for outputs (i.e. same for all subjects)
     
-    input_path_split = input_file_path.split('/')
-    if 'ses-' in input_path_split[-3]:
-        partial_sub_path = '/'.join(input_path_split[-4:])
-        beginning_path = '/'.join(input_path_split[:-4])
-    else:
-        partial_sub_path = '/'.join(input_path_split[-3:])
-        beginning_path = '/'.join(input_path_split[:-3])
+    import nibabel as nib
+    import numpy as np
+    import dipy
+    from dipy import align
 
-    anat_out_dir = os.path.join(output_destination, os.path.dirname(partial_sub_path))
-    if os.path.exists(anat_out_dir) == False:
-        os.makedirs(anat_out_dir)
-        
-    is_qalas = False
+    partial_sub_path = subject_relative_path(input_file_path)
     if 'T1w' in partial_sub_path:
         contrast = 'T1w'
-        stripped_out_file = os.path.join(output_destination, partial_sub_path).replace('T1w.nii.gz', 'masked-brain_T1w.nii.gz')
-        final_registered_out_file = os.path.join(output_destination, partial_sub_path).replace('T1w.nii.gz', 'reg-MNIInfant_T1w.nii.gz')
     elif 'T2w' in partial_sub_path:
         contrast = 'T2w'
-        stripped_out_file = os.path.join(output_destination, partial_sub_path).replace('T2w.nii.gz', 'masked-brain_T2w.nii.gz')
-        final_registered_out_file = os.path.join(output_destination, partial_sub_path).replace('T2w.nii.gz', 'reg-MNIInfant_T2w.nii.gz')
     elif 'QALAS.nii' in partial_sub_path:
         contrast = 'T1w'
-        is_qalas = True
-        stripped_out_file = os.path.join(output_destination, partial_sub_path).replace('QALAS.nii.gz', 'masked-brain_QALAS.nii.gz')
-        final_registered_out_file = os.path.join(output_destination, partial_sub_path).replace('QALAS.nii.gz', 'reg-MNIInfant_QALAS.nii.gz')
-        
-    if os.path.exists(final_registered_out_file):
+    else:
+        raise ValueError('Unsupported anatomical contrast in input: ' + input_file_path)
+
+    stripped_out_file, final_registered_out_file = output_paths(input_file_path, output_destination, contrast)
+    os.makedirs(os.path.dirname(final_registered_out_file), exist_ok=True)
+
+    if reuse_existing_output_file and os.path.exists(final_registered_out_file):
         print('Using already existing registered out file with name: {}'.format(final_registered_out_file))
+        if not os.path.exists(stripped_out_file):
+            run_synthstrip(input_file_path, stripped_out_file)
         return final_registered_out_file, stripped_out_file
+
+    run_synthstrip(input_file_path, stripped_out_file)
     
-    os.system('python3 /freesurfer/mri_synthstrip -i {input_path} -o {output_skull_stripped_path}'.format(
-        input_path = input_file_path, output_skull_stripped_path = stripped_out_file))
-    
-    print('Attempting Native to MNI Infant Registration using DIPY: ')
-    template_image_path = '/image_templates/tpl-MNIInfant_cohort-1_res-1_mask-applied_{}.nii.gz'.format(contrast)
+    print('Attempting Native to MNI152NLin2009cAsym Registration using DIPY: ')
+    template_image_path = TEMPLATE_PATH.format(contrast)
     template_image = dipy.io.image.load_nifti(template_image_path)
     registered_img = align.affine_registration(stripped_out_file, template_image[0], static_affine=template_image[1])
 
@@ -113,6 +154,11 @@ def make_slices_image(image_nifti_path, slice_info_dict, output_img_name, close_
     
     '''
     
+    import nibabel as nib
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.interpolate import RegularGridInterpolator
+
     #Load the nifti image
     nifti_image = nib.load(image_nifti_path)
     
@@ -123,6 +169,8 @@ def make_slices_image(image_nifti_path, slice_info_dict, output_img_name, close_
     else:
         mask_data = nib.load(mask_path).get_fdata()
         mask_vals = mask_data[mask_data > 0.5]
+        if mask_vals.size == 0:
+            raise ValueError('Brain mask contains no voxels above the threshold: ' + mask_path)
         vmin = np.percentile(mask_vals, 1)
         vmax = np.percentile(mask_vals, 99)
         #hist_results = np.histogram(mask_vals, bins = 100)
@@ -188,143 +236,77 @@ def make_slices_image(image_nifti_path, slice_info_dict, output_img_name, close_
     return
 
 
-#Configure the commands that can be fed to the command line
-parser = argparse.ArgumentParser()
-parser.add_argument("bids_dir", help="The path to the BIDS directory for your study (this is the same for all subjects)", type=str)
-parser.add_argument("output_dir", help="The path to the folder where outputs will be stored (this is the same for all subjects)", type=str)
-parser.add_argument("analysis_level", help="Should always be participant", type=str)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('bids_dir', help='The path to the BIDS directory for your study', type=str)
+    parser.add_argument('output_dir', help='The path to the folder where outputs will be stored', type=str)
+    parser.add_argument('analysis_level', help='Should always be participant', type=str)
+    parser.add_argument('--participant_label', '--participant-label', help='Subject label(s), separated by spaces', type=str)
+    parser.add_argument('--session_id', '--session-id', help='Optional session label', type=str)
+    parser.add_argument('--matplotlib_contrast', '--matplotlib-contrast', help='Use matplotlib to determine image contrast', action='store_true')
+    args = parser.parse_args()
 
-parser.add_argument('--participant_label', '--participant-label', help="The name/label of the subject to be processed (i.e. sub-01 or 01)", type=str)
-parser.add_argument('--session_id', '--session-id', help="OPTIONAL: the name of a specific session to be processed (i.e. ses-01)", type=str)
-parser.add_argument('--matplotlib_contrast', '--matplotlib-contrast', help="Use matplotlib to determine image contrast instead of brain mask intensity statistics.", action='store_true')
-args = parser.parse_args()
+    bids_dir = os.path.abspath(args.bids_dir)
+    output_dir = os.path.abspath(args.output_dir)
+    if args.analysis_level != 'participant':
+        raise ValueError('Error: analysis level must be participant, but program received: ' + args.analysis_level)
 
+    if args.session_id:
+        session_label = args.session_id if args.session_id.startswith('ses-') else 'ses-' + args.session_id
+    else:
+        session_label = None
 
-#Get cwd in case relative paths are given
-cwd = os.getcwd()
+    if args.participant_label:
+        participants = [label if label.startswith('sub-') else 'sub-' + label
+                        for label in args.participant_label.split()]
+    else:
+        participants = [path for path in glob.glob(os.path.join(bids_dir, 'sub-*'))
+                        if os.path.isdir(path)]
 
-#reassign variables to command line input
-bids_dir = args.bids_dir
-if os.path.isabs(bids_dir) == False:
-    bids_dir = os.path.join(cwd, bids_dir)
-output_dir = args.output_dir
-if os.path.isabs(output_dir) == False:
-    output_dir = os.path.join(cwd, output_dir)
-analysis_level = args.analysis_level
-if analysis_level != 'participant':
-    raise ValueError('Error: analysis level must be participant, but program received: ' + analysis_level)
-matplotlib_contrast = args.matplotlib_contrast
+    slice_info_dict = {'coronal_1': [0, -25, 100, 100], 'coronal_2': [0, 0, 100, 100],
+                       'coronal_3': [0, 25, 100, 100], 'sagittal_1': [1, -50, 100, 100],
+                       'sagittal_2': [1, 0, 100, 100], 'sagittal_3': [1, 30, 100, 100],
+                       'axial_1': [2, -50, 100, 100], 'axial_2': [2, 0, 100, 100],
+                       'axial_3': [2, 50, 100, 100]}
 
+    processed_count = 0
+    for participant in participants:
+        subject_path = participant if os.path.isabs(participant) else os.path.join(bids_dir, participant)
+        if not os.path.isdir(subject_path):
+            raise AttributeError('Error: no directory found at: ' + subject_path)
 
-#Set session label
-if args.session_id:
-    session_label = args.session_id
-    if 'ses-' not in session_label:
-        session_label = 'ses-' + session_label
-else:
-    session_label = None
-    
-#Find participants to try running
-if args.participant_label:
-    participant_split = args.participant_label.split(' ')
-    participants = []
-    for temp_participant in participant_split:
-        if 'sub-' not in temp_participant:
-            participants.append('sub-' + temp_participant)
+        if session_label is None:
+            sessions = [path for path in glob.glob(os.path.join(subject_path, 'ses*'))
+                        if os.path.isdir(path)] or [subject_path]
         else:
-            participants.append(temp_participant)
-else:
-    os.chdir(bids_dir)
-    participants = glob.glob('sub-*')
-    
-#Dictionary for making slices
-slice_info_dict = {'coronal_1' : [0, -25, 100, 100],
-                   'coronal_2' : [0, 0, 100, 100],
-                   'coronal_3' : [0, 25, 100, 100],
-                   'sagittal_1' : [1, -50, 100, 100],
-                   'sagittal_2' : [1, 0, 100, 100],
-                   'sagittal_3' : [1, 30, 100, 100],
-                   'axial_1' : [2, -50, 100, 100],
-                   'axial_2' : [2, 0, 100, 100],
-                   'axial_3' : [2, 50, 100, 100]}
-    
-#Iterate through all participants
-for temp_participant in participants:
-    
-    #Check that participant exists at expected path
-    subject_path = os.path.join(bids_dir, temp_participant)
-    if os.path.exists(subject_path):
-        os.chdir(subject_path)
-    else:
-        raise AttributeError('Error: no directory found at: ' + subject_path)
-    
-    #Find session/sessions
-    if session_label == None:
-        sessions = glob.glob('ses*')
-        if len(sessions) < 1:
-            sessions = ['']
-    elif os.path.exists(session_label):
-        sessions = [session_label]
-    else:
-        raise AttributeError('Error: session with name ' + session_label + ' does not exist at ' + subject_path)
+            requested_session = os.path.join(subject_path, session_label)
+            if not os.path.isdir(requested_session):
+                raise AttributeError('Error: session with name ' + session_label + ' does not exist at ' + subject_path)
+            sessions = [requested_session]
 
-    #Iterate through sessions
-    for temp_session in sessions:
+        for session_path in sessions:
+            anat_dir = os.path.join(session_path, 'anat')
+            images = {
+                'T1w': glob.glob(os.path.join(anat_dir, '*T1w.nii')) + glob.glob(os.path.join(anat_dir, '*T1w.nii.gz')),
+                'T2w': glob.glob(os.path.join(anat_dir, '*T2w.nii')) + glob.glob(os.path.join(anat_dir, '*T2w.nii.gz')),
+                'QALAS': glob.glob(os.path.join(anat_dir, '*inv-2_QALAS.nii')) + glob.glob(os.path.join(anat_dir, '*inv-2_QALAS.nii.gz')),
+            }
+            for contrast, image_paths in images.items():
+                for input_file_path in image_paths:
+                    registered_path, masked_path = register_images(input_file_path, output_dir)
+                    slice_img_path = registered_path.replace('.nii.gz', '_image-slice.png')
+                    mask_for_plot = None if args.matplotlib_contrast else masked_path
+                    make_slices_image(registered_path, slice_info_dict, slice_img_path,
+                                      close_plot=True, upsample_factor=2, mask_path=mask_for_plot)
+                    if os.path.exists(masked_path):
+                        os.remove(masked_path)
+                    copy_sidecar(input_file_path, registered_path)
+                    processed_count += 1
+            print('Finished with: {}'.format(session_path))
 
-        #If there is no session structure, this will go to the subject path
-        session_path = os.path.join(subject_path, temp_session)
+    if processed_count == 0:
+        raise ValueError('No supported T1w, T2w, or inv-2 QALAS images were found.')
 
-        #Grab T1w file
-        anats_dict = {}
-        t1_anats = glob.glob(os.path.join(session_path,'anat/*T1w.ni*'))
-        anats_dict['T1w_images'] = t1_anats
-        
-        #Grab T2w file
-        t2_anats = glob.glob(os.path.join(session_path,'anat/*T2w.ni*'))
-        anats_dict['T2w_images'] = t2_anats
 
-        #Grab QALAS file - specifically take inv2 for now
-        qalas_anats = glob.glob(os.path.join(session_path,'anat/*inv-2_QALAS.ni*'))
-        anats_dict['QALAS_images'] = qalas_anats
-        
-        for temp_t1w in anats_dict['T1w_images']:
-            registered_nii_for_slice_img, masked_image = register_images(temp_t1w, output_dir)
-            slice_img_path = registered_nii_for_slice_img.replace('T1w.nii', 'T1w_image-slice.png')
-            slice_img_path = slice_img_path.replace('slice.png.gz', 'slice.png') #For case when nifti is compressed
-            if matplotlib_contrast == False:
-                make_slices_image(registered_nii_for_slice_img, slice_info_dict, slice_img_path, close_plot = True,
-                        upsample_factor = 2, mask_path = masked_image)
-            else:
-                make_slices_image(registered_nii_for_slice_img, slice_info_dict, slice_img_path, close_plot = True,
-                        upsample_factor = 2)
-            os.remove(masked_image)
-            shutil.copyfile(temp_t1w.replace('.nii.gz', '.json'), registered_nii_for_slice_img.replace('.nii.gz', '.json'))
-            
-            
-        for temp_t2w in anats_dict['T2w_images']:
-            registered_nii_for_slice_img, masked_image = register_images(temp_t2w, output_dir)
-            slice_img_path = registered_nii_for_slice_img.replace('T2w.nii', 'T2w_image-slice.png')
-            slice_img_path = slice_img_path.replace('slice.png.gz', 'slice.png') #For case when nifti is compressed
-            if matplotlib_contrast == False:
-                make_slices_image(registered_nii_for_slice_img, slice_info_dict, slice_img_path, close_plot = True,
-                        upsample_factor = 2, mask_path = masked_image)
-            else:
-                make_slices_image(registered_nii_for_slice_img, slice_info_dict, slice_img_path, close_plot = True,
-                        upsample_factor = 2)
-            os.remove(masked_image)
-            shutil.copyfile(temp_t2w.replace('.nii.gz', '.json'), registered_nii_for_slice_img.replace('.nii.gz', '.json'))
-                
-        for temp_qalas in anats_dict['QALAS_images']:
-            registered_nii_for_slice_img, masked_image = register_images(temp_qalas, output_dir)
-            slice_img_path = registered_nii_for_slice_img.replace('QALAS.nii', 'QALAS_image-slice.png')
-            slice_img_path = slice_img_path.replace('slice.png.gz', 'slice.png') #For case when nifti is compressed
-            if matplotlib_contrast == False:
-                make_slices_image(registered_nii_for_slice_img, slice_info_dict, slice_img_path, close_plot = True,
-                        upsample_factor = 2, mask_path = masked_image)
-            else:
-                make_slices_image(registered_nii_for_slice_img, slice_info_dict, slice_img_path, close_plot = True,
-                        upsample_factor = 2)
-            os.remove(masked_image)
-            shutil.copyfile(temp_qalas.replace('.nii.gz', '.json'), registered_nii_for_slice_img.replace('.nii.gz', '.json'))
-
-        print('Finished with: {}'.format(session_path))
+if __name__ == '__main__':
+    main()
