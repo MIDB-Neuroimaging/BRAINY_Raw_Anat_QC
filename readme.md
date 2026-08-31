@@ -5,7 +5,8 @@ structure of a BIDS application. With that in mind it can be run as follows:
 >> brainy_qc /bids_dir /output_dir participant
 
 Processing can also be restricted to a specific subject or session by adding --participant_label or
---session_id flags.
+--session_id flags. Image selection is controlled by a pybids filter file; the repository default is
+`filters/default.json`.
 
 The pipeline looks for T1w/T2w/QALAS scans and tries to make snapshot png images for each of them. Once
 an image is found, it is skull stripped by SynthStrip, then it is aligned to MNI152NLin2009cAsym space using a
@@ -50,6 +51,28 @@ Build the image from the repository root with:
 
 The adult MNI templates in `image_templates/` are copied into the image during the build, so both template
 files must be present in the build context.
+
+## BIDS filters
+
+The default filter selects anatomical T1w and T2w images and the `inv-2` QALAS image, matching the
+container's original behavior. Users can provide a different JSON filter file with `--filter-file`:
+
+	brainy_qc /bids_dir /output_dir participant --filter-file /path/to/my_filters.json
+
+The filter file contains `T1w`, `T2w`, and `QALAS` objects whose values are pybids `BIDSLayout.get()`
+queries. This allows BIDS entities and JSON metadata to be used, for example:
+
+	{
+	  "T1w": {"datatype": "anat", "suffix": "T1w", "SeriesDescription": "MPRAGE"},
+	  "T2w": {"datatype": "anat", "suffix": "T2w"},
+	  "QALAS": {"datatype": "anat", "suffix": "QALAS", "inv": "2"}
+	}
+
+Filters should select NIfTI files with `.nii` or `.nii.gz` extensions. Metadata fields such as
+`SeriesDescription` are read from the matching JSON sidecars by pybids.
+
+Registered outputs preserve the source entities, use `space-MNI152NLin2009cAsym`, and end in the source
+modality suffix. Brain masks use the BIDS-style `desc-brain_mask` suffix.
 
 ## Creating a tagged release
 

@@ -5,9 +5,10 @@ FROM freesurfer/synthstrip@sha256:0fac3ee2f9ba4b579fc59265753f3e1e33f7153b6e4737
 RUN python3 -m pip install nibabel==3.2.2
 RUN python3 -m pip install dipy==1.6.0
 RUN python3 -m pip install matplotlib==3.3.4
+RUN python3 -m pip install pybids==0.18.1
 
 #Make code and data directory
-RUN mkdir /brainy_code && mkdir /image_templates
+RUN mkdir /brainy_code && mkdir /brainy_code/filters && mkdir /image_templates
 
 #Copy over images
 ADD image_templates/tpl-MNI152NLin2009cAsym_res-01_mask-applied_T1w.nii.gz /image_templates/tpl-MNI152NLin2009cAsym_res-01_mask-applied_T1w.nii.gz
@@ -15,6 +16,7 @@ ADD image_templates/tpl-MNI152NLin2009cAsym_res-01_mask-applied_T2w.nii.gz /imag
 
 #Copy code, assign permissions
 ADD run.py /brainy_code/run.py
+ADD filters/default.json /brainy_code/filters/default.json
 RUN chmod 555 -R /brainy_code
 ENV PATH="${PATH}:/brainy_code"
 RUN pipeline_name=brainy_qc && cp /brainy_code/run.py /brainy_code/$pipeline_name

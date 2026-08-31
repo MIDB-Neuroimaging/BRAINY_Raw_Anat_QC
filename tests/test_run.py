@@ -9,17 +9,17 @@ import run
 class RunHelpersTest(unittest.TestCase):
     def test_output_paths_support_uncompressed_nifti(self):
         masked, registered = run.output_paths(
-            '/data/sub-01/ses-01/anat/sub-01_T1w.nii',
+            '/data/sub-01/ses-01/anat/sub-01_ses-01_run-1_T1w.nii',
             '/outputs',
             'T1w',
         )
         self.assertEqual(
             masked,
-            '/outputs/sub-01/ses-01/anat/masked-brain_T1w.nii.gz',
+            '/outputs/sub-01/ses-01/anat/sub-01_ses-01_run-1_desc-brain_mask.nii.gz',
         )
         self.assertEqual(
             registered,
-            '/outputs/sub-01/ses-01/anat/reg-MNI152NLin2009cAsym_T1w.nii.gz',
+            '/outputs/sub-01/ses-01/anat/sub-01_ses-01_run-1_space-MNI152NLin2009cAsym_T1w.nii.gz',
         )
 
     def test_output_paths_use_qalas_suffix(self):
@@ -28,7 +28,13 @@ class RunHelpersTest(unittest.TestCase):
             '/outputs',
             'T1w',
         )
-        self.assertTrue(registered.endswith('reg-MNI152NLin2009cAsym_QALAS.nii.gz'))
+        self.assertTrue(registered.endswith('sub-01_inv-2_space-MNI152NLin2009cAsym_QALAS.nii.gz'))
+
+    def test_default_filter_contains_current_image_selection(self):
+        filters = run.load_filter_file('filters/default.json')
+        self.assertEqual(filters['T1w']['suffix'], 'T1w')
+        self.assertEqual(filters['T2w']['suffix'], 'T2w')
+        self.assertEqual(filters['QALAS']['inv'], '2')
 
     def test_subject_relative_path_does_not_depend_on_session_depth(self):
         self.assertEqual(

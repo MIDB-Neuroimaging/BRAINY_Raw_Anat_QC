@@ -1,0 +1,18 @@
+{
+  "T1w": {
+    "datatype": "anat",
+    "suffix": "T1w",
+    "extension": [".nii", ".nii.gz"]
+  },
+  "T2w": {
+    "datatype": "anat",
+    "suffix": "T2w",
+    "extension": [".nii", ".nii.gz"]
+  },
+  "QALAS": {
+    "datatype": "anat",
+    "suffix": "QALAS",
+    "inv": "2",
+    "extension": [".nii", ".nii.gz"]
+  }
+}
