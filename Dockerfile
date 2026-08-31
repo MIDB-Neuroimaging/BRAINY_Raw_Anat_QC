@@ -5,7 +5,7 @@ FROM freesurfer/synthstrip@sha256:0fac3ee2f9ba4b579fc59265753f3e1e33f7153b6e4737
 RUN python3 -m pip install nibabel==3.2.2
 RUN python3 -m pip install dipy==1.6.0
 RUN python3 -m pip install matplotlib==3.3.4
-RUN python3 -m pip install pybids==0.18.1
+RUN python3 -m pip install pybids==0.14.1
 
 #Make code and data directory
 RUN mkdir /brainy_code && mkdir /brainy_code/filters && mkdir /image_templates
