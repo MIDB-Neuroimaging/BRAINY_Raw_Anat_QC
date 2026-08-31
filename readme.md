@@ -72,7 +72,8 @@ Filters should select NIfTI files with `.nii` or `.nii.gz` extensions. Metadata 
 `SeriesDescription` are read from the matching JSON sidecars by pybids.
 
 Registered outputs preserve the source entities, use `space-MNI152NLin2009cAsym`, and end in the source
-modality suffix. Brain masks use the BIDS-style `desc-brain_mask` suffix.
+modality suffix. Brain masks use modality-specific BIDS-style names such as
+`sub-01_ses-01_desc-brain_mask_T1w.nii.gz` and `sub-01_ses-01_desc-brain_mask_T2w.nii.gz`.
 
 ## Creating a tagged release
 

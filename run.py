@@ -36,7 +36,10 @@ def output_paths(input_file_path, output_destination, contrast):
     source_suffix = 'QALAS' if input_stem.endswith('_QALAS') else contrast
     source_prefix = input_stem[:-len(source_suffix)].rstrip('_')
     derivative_prefix = '{}_space-MNI152NLin2009cAsym'.format(source_prefix)
-    masked_path = os.path.join(output_base, '{}_desc-brain_mask.nii.gz'.format(source_prefix))
+    masked_path = os.path.join(
+        output_base,
+        '{}_desc-brain_mask_{}.nii.gz'.format(source_prefix, source_suffix),
+    )
     registered_path = os.path.join(
         output_base,
         '{}_{}.nii.gz'.format(derivative_prefix, source_suffix),

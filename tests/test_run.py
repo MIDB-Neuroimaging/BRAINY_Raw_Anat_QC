@@ -15,7 +15,7 @@ class RunHelpersTest(unittest.TestCase):
         )
         self.assertEqual(
             masked,
-            '/outputs/sub-01/ses-01/anat/sub-01_ses-01_run-1_desc-brain_mask.nii.gz',
+            '/outputs/sub-01/ses-01/anat/sub-01_ses-01_run-1_desc-brain_mask_T1w.nii.gz',
         )
         self.assertEqual(
             registered,
@@ -29,6 +29,13 @@ class RunHelpersTest(unittest.TestCase):
             'T1w',
         )
         self.assertTrue(registered.endswith('sub-01_inv-2_space-MNI152NLin2009cAsym_QALAS.nii.gz'))
+
+    def test_brain_masks_are_unique_by_modality(self):
+        t1_mask, _ = run.output_paths('/data/sub-01/anat/sub-01_T1w.nii.gz', '/outputs', 'T1w')
+        t2_mask, _ = run.output_paths('/data/sub-01/anat/sub-01_T2w.nii.gz', '/outputs', 'T2w')
+        self.assertEqual(t1_mask, '/outputs/sub-01/anat/sub-01_desc-brain_mask_T1w.nii.gz')
+        self.assertEqual(t2_mask, '/outputs/sub-01/anat/sub-01_desc-brain_mask_T2w.nii.gz')
+        self.assertNotEqual(t1_mask, t2_mask)
 
     def test_default_filter_contains_current_image_selection(self):
         filters = run.load_filter_file('filters/default.json')
