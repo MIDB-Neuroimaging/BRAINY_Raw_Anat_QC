@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import os, glob, shutil
+import os, json, shutil
 import subprocess
 import argparse
 
@@ -27,20 +27,19 @@ def subject_relative_path(input_file_path):
 
 
 def output_paths(input_file_path, output_destination, contrast):
-    """Build output paths while always writing registered images as .nii.gz."""
+    """Build BIDS-like derivative paths while preserving source entities."""
     relative_path = subject_relative_path(input_file_path)
     input_name = os.path.basename(relative_path)
     extension = nifti_extension(input_name)
     input_stem = input_name[:-len(extension)]
     output_base = os.path.join(output_destination, os.path.dirname(relative_path))
-    if input_stem.endswith('_QALAS'):
-        output_suffix = 'QALAS'
-    else:
-        output_suffix = contrast
-    masked_path = os.path.join(output_base, 'masked-brain_{}.nii.gz'.format(output_suffix))
+    source_suffix = 'QALAS' if input_stem.endswith('_QALAS') else contrast
+    source_prefix = input_stem[:-len(source_suffix)].rstrip('_')
+    derivative_prefix = '{}_space-MNI152NLin2009cAsym'.format(source_prefix)
+    masked_path = os.path.join(output_base, '{}_desc-brain_mask.nii.gz'.format(source_prefix))
     registered_path = os.path.join(
         output_base,
-        'reg-MNI152NLin2009cAsym_{}.nii.gz'.format(output_suffix),
+        '{}_{}.nii.gz'.format(derivative_prefix, source_suffix),
     )
     return masked_path, registered_path
 
@@ -63,6 +62,37 @@ def copy_sidecar(input_file_path, output_file_path):
     input_sidecar = sidecar_path(input_file_path)
     if os.path.exists(input_sidecar):
         shutil.copyfile(input_sidecar, sidecar_path(output_file_path))
+
+
+def load_filter_file(filter_file_path):
+    """Load image queries from a JSON filter file."""
+    with open(filter_file_path) as filter_file:
+        filters = json.load(filter_file)
+    if not isinstance(filters, dict) or not {'T1w', 'T2w', 'QALAS'}.issubset(filters):
+        raise ValueError('Filter file must contain T1w, T2w, and QALAS objects')
+    return filters
+
+
+def discover_images(bids_dir, filter_file_path, participant_label=None, session_label=None):
+    """Find input images with pybids using the supplied filter queries."""
+    from bids import BIDSLayout
+
+    layout = BIDSLayout(bids_dir, validate=False, derivatives=False)
+    filters = load_filter_file(filter_file_path)
+    entities = {}
+    if participant_label:
+        entities['subject'] = [label[4:] if label.startswith('sub-') else label
+                               for label in participant_label.split()]
+    if session_label:
+        entities['session'] = session_label[4:] if session_label.startswith('ses-') else session_label
+
+    images = {}
+    for contrast, query in filters.items():
+        query = dict(query)
+        query.update(entities)
+        query['return_type'] = 'filename'
+        images[contrast] = sorted(layout.get(**query))
+    return images
 
 
 
@@ -243,6 +273,9 @@ def main():
     parser.add_argument('analysis_level', help='Should always be participant', type=str)
     parser.add_argument('--participant_label', '--participant-label', help='Subject label(s), separated by spaces', type=str)
     parser.add_argument('--session_id', '--session-id', help='Optional session label', type=str)
+    parser.add_argument('--filter_file', '--filter-file',
+                        default=os.path.join(os.path.dirname(__file__), 'filters', 'default.json'),
+                        help='JSON file containing pybids queries for T1w, T2w, and QALAS images')
     parser.add_argument('--matplotlib_contrast', '--matplotlib-contrast', help='Use matplotlib to determine image contrast', action='store_true')
     args = parser.parse_args()
 
@@ -251,17 +284,8 @@ def main():
     if args.analysis_level != 'participant':
         raise ValueError('Error: analysis level must be participant, but program received: ' + args.analysis_level)
 
-    if args.session_id:
-        session_label = args.session_id if args.session_id.startswith('ses-') else 'ses-' + args.session_id
-    else:
-        session_label = None
-
-    if args.participant_label:
-        participants = [label if label.startswith('sub-') else 'sub-' + label
-                        for label in args.participant_label.split()]
-    else:
-        participants = [path for path in glob.glob(os.path.join(bids_dir, 'sub-*'))
-                        if os.path.isdir(path)]
+    session_label = args.session_id
+    images = discover_images(bids_dir, args.filter_file, args.participant_label, session_label)
 
     slice_info_dict = {'coronal_1': [0, -25, 125, 125], 'coronal_2': [0, 0, 125, 125],
                        'coronal_3': [0, 25, 125, 125], 'sagittal_1': [1, -50, 125, 125],
@@ -270,39 +294,18 @@ def main():
                        'axial_3': [2, 50, 125, 125]}
 
     processed_count = 0
-    for participant in participants:
-        subject_path = participant if os.path.isabs(participant) else os.path.join(bids_dir, participant)
-        if not os.path.isdir(subject_path):
-            raise AttributeError('Error: no directory found at: ' + subject_path)
-
-        if session_label is None:
-            sessions = [path for path in glob.glob(os.path.join(subject_path, 'ses*'))
-                        if os.path.isdir(path)] or [subject_path]
-        else:
-            requested_session = os.path.join(subject_path, session_label)
-            if not os.path.isdir(requested_session):
-                raise AttributeError('Error: session with name ' + session_label + ' does not exist at ' + subject_path)
-            sessions = [requested_session]
-
-        for session_path in sessions:
-            anat_dir = os.path.join(session_path, 'anat')
-            images = {
-                'T1w': glob.glob(os.path.join(anat_dir, '*T1w.nii')) + glob.glob(os.path.join(anat_dir, '*T1w.nii.gz')),
-                'T2w': glob.glob(os.path.join(anat_dir, '*T2w.nii')) + glob.glob(os.path.join(anat_dir, '*T2w.nii.gz')),
-                'QALAS': glob.glob(os.path.join(anat_dir, '*inv-2_QALAS.nii')) + glob.glob(os.path.join(anat_dir, '*inv-2_QALAS.nii.gz')),
-            }
-            for contrast, image_paths in images.items():
-                for input_file_path in image_paths:
-                    registered_path, masked_path = register_images(input_file_path, output_dir)
-                    slice_img_path = registered_path.replace('.nii.gz', '_image-slice.png')
-                    mask_for_plot = None if args.matplotlib_contrast else masked_path
-                    make_slices_image(registered_path, slice_info_dict, slice_img_path,
-                                      close_plot=True, upsample_factor=2, mask_path=mask_for_plot)
-                    if os.path.exists(masked_path):
-                        os.remove(masked_path)
-                    copy_sidecar(input_file_path, registered_path)
-                    processed_count += 1
-            print('Finished with: {}'.format(session_path))
+    for contrast, image_paths in images.items():
+        for input_file_path in image_paths:
+            registered_path, masked_path = register_images(input_file_path, output_dir)
+            slice_img_path = registered_path.replace('.nii.gz', '_desc-slices.png')
+            mask_for_plot = None if args.matplotlib_contrast else masked_path
+            make_slices_image(registered_path, slice_info_dict, slice_img_path,
+                              close_plot=True, upsample_factor=2, mask_path=mask_for_plot)
+            if os.path.exists(masked_path):
+                os.remove(masked_path)
+            copy_sidecar(input_file_path, registered_path)
+            processed_count += 1
+        print('Finished {} {} image(s)'.format(contrast, len(image_paths)))
 
     if processed_count == 0:
         raise ValueError('No supported T1w, T2w, or inv-2 QALAS images were found.')
