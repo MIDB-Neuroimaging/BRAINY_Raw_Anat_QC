@@ -139,18 +139,18 @@ def make_slices_image(image_nifti_path, slice_info_dict, output_img_name, close_
     entry indicates where (in RAS) the center of the plane
     should be placed. And the third and fourth entries dictate
     the range of voxels to be included in the slice. For example,
-    100 would mean that 200 units are included. Larger values
+    125 would mean that 250 units are included. Larger values
     will make larger field of views. 
     
-    slice_info_dict = {'coronal_1' : [0, -25, 100, 100],
-                   'coronal_2' : [0, 0, 100, 100],
-                   'coronal_3' : [0, 25, 100, 100],
-                   'sagittal_1' : [1, -50, 100, 100],
-                   'sagittal_2' : [1, 0, 100, 100],
-                   'sagittal_3' : [1, 30, 100, 100],
-                   'axial_1' : [2, -50, 100, 100],
-                   'axial_2' : [2, 0, 100, 100],
-                   'axial_3' : [2, 50, 100, 100]}
+    slice_info_dict = {'coronal_1' : [0, -25, 125, 125],
+                   'coronal_2' : [0, 0, 125, 125],
+                   'coronal_3' : [0, 25, 125, 125],
+                   'sagittal_1' : [1, -50, 125, 125],
+                   'sagittal_2' : [1, 0, 125, 125],
+                   'sagittal_3' : [1, 30, 125, 125],
+                   'axial_1' : [2, -50, 125, 125],
+                   'axial_2' : [2, 0, 125, 125],
+                   'axial_3' : [2, 50, 125, 125]}
     
     '''
     
@@ -263,11 +263,11 @@ def main():
         participants = [path for path in glob.glob(os.path.join(bids_dir, 'sub-*'))
                         if os.path.isdir(path)]
 
-    slice_info_dict = {'coronal_1': [0, -25, 100, 100], 'coronal_2': [0, 0, 100, 100],
-                       'coronal_3': [0, 25, 100, 100], 'sagittal_1': [1, -50, 100, 100],
-                       'sagittal_2': [1, 0, 100, 100], 'sagittal_3': [1, 30, 100, 100],
-                       'axial_1': [2, -50, 100, 100], 'axial_2': [2, 0, 100, 100],
-                       'axial_3': [2, 50, 100, 100]}
+    slice_info_dict = {'coronal_1': [0, -25, 125, 125], 'coronal_2': [0, 0, 125, 125],
+                       'coronal_3': [0, 25, 125, 125], 'sagittal_1': [1, -50, 125, 125],
+                       'sagittal_2': [1, 0, 125, 125], 'sagittal_3': [1, 30, 125, 125],
+                       'axial_1': [2, -50, 125, 125], 'axial_2': [2, 0, 125, 125],
+                       'axial_3': [2, 50, 125, 125]}
 
     processed_count = 0
     for participant in participants:
